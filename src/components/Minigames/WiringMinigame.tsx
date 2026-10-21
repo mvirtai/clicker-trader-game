@@ -1,13 +1,7 @@
-import React, { useState } from 'react';
+import React, { useActionState, useRef, useEffect } from 'react';
 import { sound } from '../../services/soundService';
 import { Gig } from '../../types/game';
 import { Check, X } from 'lucide-react';
-
-interface WiringMinigameProps {
-  gig: Gig;
-  onComplete: (precision: number) => void;
-  onCancel: () => void;
-}
 
 interface Terminal {
   id: string;
@@ -30,43 +24,133 @@ const TERMINALS_RIGHT = [
   { id: 'W1', label: 'Moottoriliitin W1' },
 ];
 
+interface WiringState {
+  selectedLeft: string | null;
+  connections: Record<string, string>;
+  errors: number;
+  isComplete: boolean;
+  precision: number;
+}
+
+type WiringAction =
+  | { type: 'selectLeft'; terminalId: string }
+  | { type: 'connectRight'; rightId: string };
+
+const INITIAL_WIRING_STATE: WiringState = {
+  selectedLeft: null,
+  connections: {},
+  errors: 0,
+  isComplete: false,
+  precision: 0,
+};
+
+/**
+ * Puhdas tilasiirtymäfunktio switch(action.type) -rakenteella (Discriminated Union).
+ * Senioriarkkitehdin opetus:
+ * TypeScriptissä 'switch (action.type)' takaa tyyppiturvallisen haaroituksen ja
+ * mahdollistaa kattavuustarkistuksen (Exhaustiveness Check).
+ */
+function wiringReducer(state: WiringState, action: WiringAction): WiringState {
+  switch (action.type) {
+    case 'selectLeft': {
+      return {
+        ...state,
+        selectedLeft: action.terminalId,
+      };
+    }
+
+    case 'connectRight': {
+      if (!state.selectedLeft) return state;
+
+      const source = TERMINALS_LEFT.find((t) => t.id === state.selectedLeft);
+      if (!source) return state;
+
+      // Oikea kytkentä
+      if (source.targetId === action.rightId) {
+        const nextConnections = { ...state.connections, [state.selectedLeft]: action.rightId };
+        const isComplete = Object.keys(nextConnections).length === TERMINALS_LEFT.length;
+        const precision = Math.max(50, 100 - state.errors * 15);
+
+        return {
+          ...state,
+          selectedLeft: null,
+          connections: nextConnections,
+          isComplete,
+          precision: isComplete ? precision : 0,
+        };
+      }
+
+      // Virheellinen kytkentä
+      return {
+        ...state,
+        selectedLeft: null,
+        errors: state.errors + 1,
+      };
+    }
+
+    default: {
+      const _exhaustiveCheck: never = action;
+      return state;
+    }
+  }
+}
+
+interface WiringMinigameProps {
+  gig: Gig;
+  onComplete: (precision: number) => void;
+  onCancel: () => void;
+}
+
 export const WiringMinigame: React.FC<WiringMinigameProps> = ({
   gig,
   onComplete,
   onCancel,
 }) => {
-  const [selectedLeft, setSelectedLeft] = useState<string | null>(null);
-  const [connections, setConnections] = useState<Record<string, string>>({});
-  const [errors, setErrors] = useState<number>(0);
+  // React 19 useActionState yhdistää tilakoneen ja Transition-tuen
+  const [state, dispatchWiring] = useActionState(wiringReducer, INITIAL_WIRING_STATE);
+  const timeoutRef = useRef<number | null>(null);
+
+  // Perusteltu useEffect: Selaimen setTimeout-siivous komponentin poistuessa (External System Cleanup)
+  // Ei tilariippuvuuksia, ei sivuvaikutusketjuja.
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const handleSelectLeft = (id: string) => {
     sound.playClick();
-    setSelectedLeft(id);
+    dispatchWiring({ type: 'selectLeft', terminalId: id });
   };
 
   const handleSelectRight = (rightId: string) => {
-    if (!selectedLeft) return;
+    if (!state.selectedLeft) return;
 
-    const source = TERMINALS_LEFT.find((t) => t.id === selectedLeft);
+    const source = TERMINALS_LEFT.find((t) => t.id === state.selectedLeft);
     if (!source) return;
 
-    if (source.targetId === rightId) {
+    const isCorrect = source.targetId === rightId;
+    if (isCorrect) {
       sound.playSuccess();
-      const updated = { ...connections, [selectedLeft]: rightId };
-      setConnections(updated);
-      setSelectedLeft(null);
-
-      // Jos kaikki kytketty
-      if (Object.keys(updated).length === TERMINALS_LEFT.length) {
-        const precision = Math.max(50, 100 - errors * 15);
-        setTimeout(() => {
-          onComplete(precision);
-        }, 800);
-      }
     } else {
       sound.playError();
-      setErrors((prev) => prev + 1);
-      setSelectedLeft(null);
+    }
+
+    const nextConnectionsCount = isCorrect
+      ? Object.keys(state.connections).length + 1
+      : Object.keys(state.connections).length;
+    const isCompletedNow = isCorrect && nextConnectionsCount === TERMINALS_LEFT.length;
+
+    dispatchWiring({ type: 'connectRight', rightId });
+
+    // Senioriarkkitehdin opetus:
+    // Käyttäjän toimenpiteestä johtuva minipelin päättyminen suoritetaan suoraan
+    // tapahtumankäsittelijässä eikä kierrätetä 'useEffect'-sivuvaikutusketjun kautta.
+    if (isCompletedNow) {
+      const precision = Math.max(50, 100 - state.errors * 15);
+      timeoutRef.current = window.setTimeout(() => {
+        onComplete(precision);
+      }, 800);
     }
   };
 
@@ -90,8 +174,8 @@ export const WiringMinigame: React.FC<WiringMinigameProps> = ({
         <div className="space-y-3">
           <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Syöttökaapeli</span>
           {TERMINALS_LEFT.map((term) => {
-            const isConnected = !!connections[term.id];
-            const isSelected = selectedLeft === term.id;
+            const isConnected = !!state.connections[term.id];
+            const isSelected = state.selectedLeft === term.id;
 
             return (
               <button
@@ -123,8 +207,8 @@ export const WiringMinigame: React.FC<WiringMinigameProps> = ({
         <div className="space-y-3">
           <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Keskusrimat</span>
           {TERMINALS_RIGHT.map((term) => {
-            const connectedSourceId = Object.keys(connections).find(
-              (k) => connections[k] === term.id
+            const connectedSourceId = Object.keys(state.connections).find(
+              (k) => state.connections[k] === term.id
             );
             const isConnected = !!connectedSourceId;
 
@@ -132,11 +216,11 @@ export const WiringMinigame: React.FC<WiringMinigameProps> = ({
               <button
                 key={term.id}
                 onClick={() => handleSelectRight(term.id)}
-                disabled={isConnected || !selectedLeft}
+                disabled={isConnected || !state.selectedLeft}
                 className={`w-full p-3 text-left rounded-lg border text-xs font-medium flex items-center justify-between transition-all ${
                   isConnected
                     ? 'bg-zinc-950/60 border-emerald-500/40 text-emerald-300 cursor-default'
-                    : selectedLeft
+                    : state.selectedLeft
                     ? 'border-zinc-700 bg-zinc-950 hover:border-amber-400 text-zinc-200 cursor-pointer'
                     : 'border-zinc-800/80 bg-zinc-950 text-zinc-600 cursor-not-allowed'
                 }`}
@@ -150,8 +234,8 @@ export const WiringMinigame: React.FC<WiringMinigameProps> = ({
       </div>
 
       <div className="flex items-center justify-between text-xs text-zinc-500 border-t border-zinc-800 pt-4">
-        <span>Kytketty: {Object.keys(connections).length} / {TERMINALS_LEFT.length}</span>
-        {errors > 0 && <span className="text-rose-400">Virhekytkentöjä: {errors}</span>}
+        <span>Kytketty: {Object.keys(state.connections).length} / {TERMINALS_LEFT.length}</span>
+        {state.errors > 0 && <span className="text-rose-400">Virhekytkentöjä: {state.errors}</span>}
       </div>
     </div>
   );

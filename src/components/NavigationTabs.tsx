@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGameStore, ActiveTab } from '../store/useGameStore';
-import { Wrench, Briefcase, Calendar, Building2, Sparkles } from 'lucide-react';
+import { Wrench, Briefcase, Calendar, Building2, Sparkles, TrendingUp } from 'lucide-react';
 
 export const NavigationTabs: React.FC = () => {
   const { activeTab, setActiveTab, hasCompanyBought, loan } = useGameStore();
@@ -26,6 +26,11 @@ export const NavigationTabs: React.FC = () => {
       label: hasCompanyBought ? 'Yritys & Laina' : 'Yrityskauppa',
       icon: <Building2 className="w-4 h-4" />,
       indicator: loan?.missedPayments > 0 ? `${loan.missedPayments} rästiä` : undefined,
+    },
+    {
+      id: 'market',
+      label: 'Pörssi & Raaka-aineet',
+      icon: <TrendingUp className="w-4 h-4" />,
     },
     {
       id: 'upgrades',

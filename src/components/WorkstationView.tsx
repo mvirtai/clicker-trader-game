@@ -20,6 +20,7 @@ export const WorkstationView: React.FC = () => {
   const [isPlayingMinigame, setIsPlayingMinigame] = useState<boolean>(false);
   const [lastEarned, setLastEarned] = useState<number | null>(null);
   const [clickAnim, setClickAnim] = useState<boolean>(false);
+  const [intelNotice, setIntelNotice] = useState<string | null>(null);
 
   const handleManualWork = () => {
     sound.playClick();
@@ -30,8 +31,11 @@ export const WorkstationView: React.FC = () => {
   };
 
   const handleMinigameFinished = (precision: number) => {
-    completeMinigame(precision);
+    const res = completeMinigame(precision);
     setIsPlayingMinigame(false);
+    if (res.intelAwarded) {
+      setIntelNotice('Kuulit työmaalla luottamuksellisen sisäpiirivihjeen! Avaa Pörssi hyödyntääksesi markkinatietoa.');
+    }
   };
 
   // Jos minipeli on käynnissä, näytetään vain kyseinen pelinäkymä ilmavasti
@@ -99,6 +103,21 @@ export const WorkstationView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {intelNotice && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-center justify-between animate-fade-in">
+          <span>{intelNotice}</span>
+          <button
+            onClick={() => {
+              setIntelNotice(null);
+              setActiveTab('market');
+            }}
+            className="ml-4 px-3 py-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold rounded-lg text-[11px] transition-colors shrink-0"
+          >
+            Siirry Pörssiin →
+          </button>
+        </div>
+      )}
 
       {/* Pääkortti: Aktiivinen toimeksianto tai keikkavalinta */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 space-y-6">

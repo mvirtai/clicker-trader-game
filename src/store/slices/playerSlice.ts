@@ -13,10 +13,19 @@ import { INITIAL_PLAYER } from '../../data/initialData';
  * stamina karkaa negatiiviseksi tai maine yli maksimin (200).
  */
 
+export interface StaminaEfficiencyBreakdown {
+  totalReductionPercent: number;
+  upgradeReductionPercent: number;
+  levelReductionPercent: number;
+  teamReductionPercent: number;
+}
+
 export interface PlayerSlice {
   player: PlayerState;
 
-  // Toiminnot (Actions)
+  // Toiminnot (Actions) & Johdetut laskimet (Selectors)
+  getEffectiveStaminaCost: (baseCost: number) => number;
+  getStaminaEfficiencyBreakdown: () => StaminaEfficiencyBreakdown;
   consumeStamina: (amount: number) => void;
   restoreStamina: (amount: number) => void;
   addXp: (amount: number) => { levelUp: boolean; newLevel: number };
@@ -32,6 +41,46 @@ export const createPlayerSlice: StateCreator<
   PlayerSlice
 > = (set, get) => ({
   player: INITIAL_PLAYER,
+
+  getStaminaEfficiencyBreakdown: () => {
+    const state = get();
+
+    // 1. Pajan kalusto-, sertifikaatti- ja automaatiopäivitykset
+    let upgradeReduction = 0;
+    state.upgrades.forEach((u) => {
+      if (u.level > 0 && u.staminaDrainReduction > 0) {
+        upgradeReduction += u.staminaDrainReduction;
+      }
+    });
+
+    // 2. Hahmon ammattitaso (2 % kevennys per taso tason 1 jälkeen, max 20 %)
+    const levelReduction = Math.min(0.2, Math.max(0, (state.player.level - 1) * 0.02));
+
+    // 3. Yrityksen työntekijöiden tuoma delegointihyöty (staminaEfficiency)
+    let teamReduction = 0;
+    if (state.hasCompanyBought && state.company?.employees) {
+      state.company.employees.forEach((emp) => {
+        teamReduction += emp.staminaEfficiency;
+      });
+    }
+
+    // Kokonaiskevennys rajataan korkeintaan 75 prosenttiin (pelitasapaino)
+    const totalReduction = Math.min(0.75, upgradeReduction + levelReduction + teamReduction);
+
+    return {
+      totalReductionPercent: Math.round(totalReduction * 100),
+      upgradeReductionPercent: Math.round(upgradeReduction * 100),
+      levelReductionPercent: Math.round(levelReduction * 100),
+      teamReductionPercent: Math.round(teamReduction * 100),
+    };
+  },
+
+  getEffectiveStaminaCost: (baseCost) => {
+    if (baseCost <= 0) return 0;
+    const { totalReductionPercent } = get().getStaminaEfficiencyBreakdown();
+    const multiplier = 1 - totalReductionPercent / 100;
+    return Math.max(0.5, Math.round(baseCost * multiplier * 10) / 10);
+  },
 
   consumeStamina: (amount) => {
     if (amount <= 0) return;

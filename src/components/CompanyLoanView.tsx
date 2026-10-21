@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useActionState } from 'react';
 import { useGameStore, calculateBusinessMetrics } from '../store/useGameStore';
 import { sound } from '../services/soundService';
 import {
@@ -10,7 +10,22 @@ import {
   DollarSign,
   ShieldAlert,
   CheckCircle,
+  ArrowLeft,
+  ArrowRight,
+  Loader2,
 } from 'lucide-react';
+
+type CompanyAction =
+  | { type: 'buyCompany' }
+  | { type: 'repayLoan'; amount: number }
+  | { type: 'hire' }
+  | { type: 'promote'; employeeId: string }
+  | { type: 'fire'; employeeId: string };
+
+interface CompanyActionState {
+  status: 'idle' | 'success' | 'error';
+  message: string | null;
+}
 
 export const CompanyLoanView: React.FC = () => {
   const store = useGameStore();
@@ -24,49 +39,81 @@ export const CompanyLoanView: React.FC = () => {
     hireEmployee,
     fireEmployee,
     promoteEmployee,
+    setActiveTab,
   } = store;
 
-  const [notification, setNotification] = useState<string | null>(null);
+  // React 19 useActionState: Hallitsee yrityskaupan, lainanlyhennysten ja henkilöstötoimintojen tilat
+  const [actionState, dispatchCompanyAction, isActionPending] = useActionState(
+    (_prev: CompanyActionState, action: CompanyAction | null): CompanyActionState => {
+      if (!action) return { status: 'idle', message: null };
+
+      if (action.type === 'buyCompany') {
+        sound.playUpgrade();
+        const res = buyCompanyWithLoan();
+        return { status: res.success ? 'success' : 'error', message: res.message };
+      }
+      if (action.type === 'repayLoan') {
+        const res = repayLoanPrincipal(action.amount);
+        if (res.success) {
+          sound.playSuccess();
+        } else {
+          sound.playError();
+        }
+        return { status: res.success ? 'success' : 'error', message: res.message };
+      }
+      if (action.type === 'hire') {
+        const res = hireEmployee({
+          name: 'Ville Koskinen',
+          role: 'Sähköasentaja (Valmis)',
+          skillLevel: 2,
+          weeklyCostEur: 360,
+          dailyOutputEur: 80,
+          staminaEfficiency: 0.1,
+        });
+        if (res.success) {
+          sound.playSuccess();
+        } else {
+          sound.playError();
+        }
+        return { status: res.success ? 'success' : 'error', message: res.message };
+      }
+      if (action.type === 'promote') {
+        const res = promoteEmployee(action.employeeId);
+        if (res.success) {
+          sound.playSuccess();
+        } else {
+          sound.playError();
+        }
+        return { status: res.success ? 'success' : 'error', message: res.message };
+      }
+      if (action.type === 'fire') {
+        const res = fireEmployee(action.employeeId);
+        return { status: res.success ? 'success' : 'error', message: res.message };
+      }
+      return { status: 'idle', message: null };
+    },
+    { status: 'idle', message: null }
+  );
+
+  const [dismissedMsg, setDismissedMsg] = useState<string | null>(null);
+  const displayNotification =
+    actionState.message && actionState.message !== dismissedMsg ? actionState.message : null;
 
   const metrics = calculateBusinessMetrics(store);
-
-  const handleBuyCompany = () => {
-    sound.playUpgrade();
-    const res = buyCompanyWithLoan();
-    setNotification(res.message);
-  };
-
-  const handleRepay = (amount: number) => {
-    const res = repayLoanPrincipal(amount);
-    if (res.success) {
-      sound.playSuccess();
-    } else {
-      sound.playError();
-    }
-    setNotification(res.message);
-  };
-
-  const handleHireCandidate = () => {
-    const res = hireEmployee({
-      name: 'Ville Koskinen',
-      role: 'Sähköasentaja (Valmis)',
-      skillLevel: 2,
-      weeklyCostEur: 360,
-      dailyOutputEur: 80,
-      staminaEfficiency: 0.1,
-    });
-    if (res.success) {
-      sound.playSuccess();
-    } else {
-      sound.playError();
-    }
-    setNotification(res.message);
-  };
 
   // Jos yritystä ei ole vielä ostettu (Phase 1)
   if (!hasCompanyBought) {
     return (
-      <div className="max-w-3xl mx-auto py-12 space-y-8">
+      <div className="max-w-3xl mx-auto py-8 space-y-8">
+        {/* Paluulinkki päänäkymään */}
+        <button
+          onClick={() => setActiveTab('workstation')}
+          className="inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-amber-400 font-medium transition-colors"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>← Palaa työpisteelle (Päänäkymä)</span>
+        </button>
+
         <div className="text-center space-y-3">
           <div className="w-12 h-12 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center justify-center mx-auto text-amber-400">
             <Building2 className="w-6 h-6" />
@@ -109,12 +156,26 @@ export const CompanyLoanView: React.FC = () => {
             </div>
           </div>
 
-          <div className="pt-2">
+          <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
             <button
-              onClick={handleBuyCompany}
-              className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-sm rounded-xl transition-all shadow-sm active:scale-[0.99]"
+              onClick={() => dispatchCompanyAction({ type: 'buyCompany' })}
+              disabled={isActionPending}
+              className="w-full sm:flex-1 py-4 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-zinc-950 font-semibold text-sm rounded-xl transition-all shadow-sm active:scale-[0.99] flex items-center justify-center gap-2"
             >
-              Hyväksy laina ja osta yritys (45 000 €)
+              {isActionPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Käsitellään kauppaa...</span>
+                </>
+              ) : (
+                <span>Hyväksy laina ja osta yritys (45 000 €)</span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('workstation')}
+              className="w-full sm:w-auto px-6 py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm font-medium rounded-xl transition-colors"
+            >
+              Harkitse myöhemmin
             </button>
           </div>
         </div>
@@ -128,16 +189,51 @@ export const CompanyLoanView: React.FC = () => {
 
   return (
     <div className="max-w-4xl mx-auto py-8 space-y-8">
-      {/* Ilmoitusviesti */}
-      {notification && (
-        <div className="p-4 bg-zinc-900 border border-zinc-700 rounded-xl text-xs text-zinc-200 flex items-center justify-between">
-          <span>{notification}</span>
+      {/* Yläosan nopea navigointi takaisin päänäkymään */}
+      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-4">
+        <button
+          onClick={() => setActiveTab('workstation')}
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 hover:text-amber-400 hover:border-zinc-700 font-medium transition-colors"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Palaa työpisteelle (Päänäkymä)</span>
+        </button>
+
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setNotification(null)}
-            className="text-zinc-500 hover:text-zinc-300 text-sm ml-4"
+            onClick={() => setActiveTab('gigs')}
+            className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
           >
-            ×
+            Keikkapörssi
           </button>
+          <span className="text-zinc-600">·</span>
+          <button
+            onClick={() => setActiveTab('market')}
+            className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
+          >
+            Pörssi & Raaka-aineet →
+          </button>
+        </div>
+      </div>
+
+      {/* Ilmoitusviesti pikalinkillä */}
+      {displayNotification && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+          <span>{displayNotification}</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setActiveTab('workstation')}
+              className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold rounded-lg text-[11px] transition-colors"
+            >
+              Siirry työpisteelle →
+            </button>
+            <button
+              onClick={() => setDismissedMsg(displayNotification)}
+              className="text-zinc-400 hover:text-zinc-200 text-sm px-1.5"
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
 
@@ -216,22 +312,22 @@ export const CompanyLoanView: React.FC = () => {
             <div className="flex flex-wrap items-center gap-3 pt-3">
               <span className="text-xs text-zinc-400">Ylimääräinen lyhennys:</span>
               <button
-                onClick={() => handleRepay(500)}
-                disabled={cash < 500}
+                onClick={() => dispatchCompanyAction({ type: 'repayLoan', amount: 500 })}
+                disabled={isActionPending || cash < 500}
                 className="px-3 py-1.5 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-zinc-200 rounded-lg transition-colors font-mono"
               >
                 -500 €
               </button>
               <button
-                onClick={() => handleRepay(2000)}
-                disabled={cash < 2000}
+                onClick={() => dispatchCompanyAction({ type: 'repayLoan', amount: 2000 })}
+                disabled={isActionPending || cash < 2000}
                 className="px-3 py-1.5 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-zinc-200 rounded-lg transition-colors font-mono"
               >
                 -2 000 €
               </button>
               <button
-                onClick={() => handleRepay(loan.principal)}
-                disabled={cash < loan.principal}
+                onClick={() => dispatchCompanyAction({ type: 'repayLoan', amount: loan.principal })}
+                disabled={isActionPending || cash < loan.principal}
                 className="px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-lg transition-colors font-mono"
               >
                 Kuittaa koko laina ({loan.principal.toLocaleString('fi-FI')} €)
@@ -257,8 +353,8 @@ export const CompanyLoanView: React.FC = () => {
           </div>
 
           <button
-            onClick={handleHireCandidate}
-            disabled={company.employees.length >= company.vanCapacity * 2}
+            onClick={() => dispatchCompanyAction({ type: 'hire' })}
+            disabled={isActionPending || company.employees.length >= company.vanCapacity * 2}
             className="px-3.5 py-2 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-40"
           >
             <UserPlus className="w-3.5 h-3.5" />
@@ -287,20 +383,16 @@ export const CompanyLoanView: React.FC = () => {
 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => {
-                      const res = promoteEmployee(emp.id);
-                      setNotification(res.message);
-                    }}
-                    className="px-2.5 py-1 text-[11px] font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors"
+                    onClick={() => dispatchCompanyAction({ type: 'promote', employeeId: emp.id })}
+                    disabled={isActionPending}
+                    className="px-2.5 py-1 text-[11px] font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors disabled:opacity-40"
                   >
                     Kouluta ({emp.skillLevel * 450} €)
                   </button>
                   <button
-                    onClick={() => {
-                      const res = fireEmployee(emp.id);
-                      setNotification(res.message);
-                    }}
-                    className="px-2.5 py-1 text-[11px] font-medium text-rose-400 hover:bg-rose-950/40 rounded transition-colors"
+                    onClick={() => dispatchCompanyAction({ type: 'fire', employeeId: emp.id })}
+                    disabled={isActionPending}
+                    className="px-2.5 py-1 text-[11px] font-medium text-rose-400 hover:bg-rose-950/40 rounded transition-colors disabled:opacity-40"
                   >
                     Irtisano
                   </button>
@@ -312,6 +404,32 @@ export const CompanyLoanView: React.FC = () => {
               Ei palkattuja työntekijöitä. Palkkaa ensimmäinen asentaja kasvattaaksesi yrityksen tuottavuutta.
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Alaosan nopea paluu työpisteelle */}
+      <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="space-y-1 text-left">
+          <span className="text-xs font-semibold text-zinc-200 block">Jatka operatiivista toimintaa</span>
+          <p className="text-[11px] text-zinc-400">
+            Palaa verstaalle tekemään asennuksia tai tarkastele pörssisalkkuasi.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={() => setActiveTab('workstation')}
+            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs rounded-xl flex items-center gap-2 transition-all shadow-sm active:scale-[0.98]"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Palaa työpisteelle (Päänäkymä)</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('gigs')}
+            className="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium text-xs rounded-xl transition-colors"
+          >
+            Keikat →
+          </button>
         </div>
       </div>
     </div>

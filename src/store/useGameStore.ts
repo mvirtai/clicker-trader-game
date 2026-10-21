@@ -16,8 +16,17 @@ import { createLoanSlice, LoanSlice } from './slices/loanSlice';
 import { createCompanySlice, CompanySlice } from './slices/companySlice';
 import { createFinancialSlice, FinancialSlice } from './slices/financialSlice';
 import { createAssetSlice, AssetSlice } from './slices/assetSlice';
+import { createMarketSlice, MarketSlice } from './slices/marketSlice';
+import { createLeaderboardSlice, LeaderboardSlice } from './slices/leaderboardSlice';
 
-export type ActiveTab = 'workstation' | 'gigs' | 'calendar' | 'company' | 'upgrades';
+export type ActiveTab =
+  | 'workstation'
+  | 'gigs'
+  | 'calendar'
+  | 'company'
+  | 'upgrades'
+  | 'market'
+  | 'leaderboards';
 
 export interface RootState {
   week: number;
@@ -44,6 +53,7 @@ export interface RootState {
     pay: number;
     xp: number;
     rep: number;
+    intelAwarded?: boolean;
   };
   buyCompanyWithLoan: () => { success: boolean; message: string };
   restartGame: () => void;
@@ -54,6 +64,8 @@ export type GameStore = PlayerSlice &
   CompanySlice &
   FinancialSlice &
   AssetSlice &
+  MarketSlice &
+  LeaderboardSlice &
   RootState;
 
 export const useGameStore = create<GameStore>()(
@@ -64,6 +76,8 @@ export const useGameStore = create<GameStore>()(
       ...createCompanySlice(set, get, api),
       ...createFinancialSlice(set, get, api),
       ...createAssetSlice(set, get, api),
+      ...createMarketSlice(set, get, api),
+      ...createLeaderboardSlice(set, get, api),
 
       // Juuritila
       week: 1,
@@ -156,6 +170,15 @@ export const useGameStore = create<GameStore>()(
         // Kulutetaan staminaa hieman suorituksesta
         state.consumeStamina(15);
 
+        // Kokeillaan ansaita sisäpiirivihje (Insider Intel)
+        const intel = state.awardInsiderIntelFromGig(gig.description, gig.clientName, precision);
+
+        // Keikan suoritus vie 30 minuuttia peliaikaa ja sulkee 30m markkinakynttilän
+        state.advanceMinute(30);
+        if (state.tickMarketPrices) {
+          state.tickMarketPrices(1800, '30m');
+        }
+
         // Merkitään nykyisen päivän tulos kalenteriin
         const curDay = state.dayOfWeek;
         set(
@@ -178,7 +201,7 @@ export const useGameStore = create<GameStore>()(
           'root/completeMinigame'
         );
 
-        return { grade, pay, xp, rep };
+        return { grade, pay, xp, rep, intelAwarded: !!intel };
       },
 
       buyCompanyWithLoan: () => {
@@ -191,7 +214,6 @@ export const useGameStore = create<GameStore>()(
         set(
           (s) => ({
             hasCompanyBought: true,
-            cash: s.cash + 45000,
             activeTab: 'company',
             loan: {
               ...s.loan,
@@ -228,9 +250,19 @@ export const useGameStore = create<GameStore>()(
         // Lepo palauttaa aina vähintään 25 staminaa
         state.restoreStamina(25);
 
+        // Päivän vaihtuminen sulkee uuden 1d-päiväkynttilän pörssissä
+        if (state.tickMarketPrices) {
+          state.tickMarketPrices(86400, '1d');
+        }
+
         // Siirrytäänkö seuraavaan viikkoon?
         if (nextIdx === 0) {
           const nextWeek = state.week + 1;
+
+          // Maksetaan pörssiosakkeiden viikko-osingot ennen kulujen veloitusta
+          if (state.processWeeklyDividends) {
+            state.processWeeklyDividends();
+          }
 
           // Suoritetaan velanhoito
           let debtResult = { defaultTriggered: false, message: '' };
@@ -327,6 +359,7 @@ export const useGameStore = create<GameStore>()(
             gameOverReason: null,
             isVictory: false,
             hasCompanyBought: false,
+            portfolio: {},
           },
           false,
           'root/restart'
@@ -369,9 +402,11 @@ export function calculateBusinessMetrics(state: GameStore): BusinessMetrics {
   else if (risk > 10) solvency = 'B';
   else if (risk === 0 && state.cash > 10000) solvency = 'A+';
 
+  const portfolioVal = state.getPortfolioValue ? state.getPortfolioValue() : 0;
+
   return {
-    netWorth: Math.round((state.cash - principal) * 100) / 100,
-    totalAssetValue: 180000 + state.cash,
+    netWorth: Math.round((state.cash + portfolioVal - principal) * 100) / 100,
+    totalAssetValue: 180000 + state.cash + portfolioVal,
     collateralRiskPercent: Math.round(risk * 10) / 10,
     weeklyRevenueEstimate: Math.round(weeklyPassiveRev),
     weeklyExpenses: Math.round(burnRatePerWeek),

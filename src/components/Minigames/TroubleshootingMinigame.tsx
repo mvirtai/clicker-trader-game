@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { sound } from '../../services/soundService';
 import { Gig } from '../../types/game';
 import { Activity, Wrench } from 'lucide-react';
@@ -53,6 +53,15 @@ export const TroubleshootingMinigame: React.FC<TroubleshootingProps> = ({
   const [probedPoints, setProbedPoints] = useState<Record<string, boolean>>({});
   const [replaced, setReplaced] = useState<boolean>(false);
   const [attempts, setAttempts] = useState<number>(0);
+  const timeoutRef = useRef<number | null>(null);
+
+  // Perusteltu useEffect: Selaimen setTimeout-siivous komponentin poistuessa (External System Cleanup)
+  // Ei tilariippuvuuksia, ei sivuvaikutusketjuja.
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const handleProbe = (id: string) => {
     sound.playClick();
@@ -67,7 +76,7 @@ export const TroubleshootingMinigame: React.FC<TroubleshootingProps> = ({
       sound.playSuccess();
       setReplaced(true);
       const precision = attempts === 0 ? 100 : 75;
-      setTimeout(() => {
+      timeoutRef.current = window.setTimeout(() => {
         onComplete(precision);
       }, 900);
     } else {

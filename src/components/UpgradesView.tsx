@@ -1,13 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useActionState } from 'react';
 import { useGameStore } from '../store/useGameStore';
 import { sound } from '../services/soundService';
 import { UpgradeCategory, UpgradeItem } from '../types/game';
 import { Check, Lock, ChevronUp } from 'lucide-react';
 
+interface UpgradeActionState {
+  status: 'idle' | 'success' | 'error';
+  message: string | null;
+}
+
 export const UpgradesView: React.FC = () => {
   const { upgrades, purchaseUpgrade, getUpgradeCost, cash, player } = useGameStore();
   const [selectedCategory, setSelectedCategory] = useState<UpgradeCategory | 'all'>('all');
-  const [notification, setNotification] = useState<string | null>(null);
+
+  // React 19 useActionState: Päivitysten osto
+  const [upgradeState, dispatchUpgrade, isUpgrading] = useActionState(
+    (_prev: UpgradeActionState, upgradeId: string | null): UpgradeActionState => {
+      if (!upgradeId) return { status: 'idle', message: null };
+      const res = purchaseUpgrade(upgradeId);
+      if (res.success) {
+        sound.playUpgrade();
+      } else {
+        sound.playError();
+      }
+      return { status: res.success ? 'success' : 'error', message: res.message };
+    },
+    { status: 'idle', message: null }
+  );
+
+  const [dismissedMsg, setDismissedMsg] = useState<string | null>(null);
+  const displayNotification =
+    upgradeState.message && upgradeState.message !== dismissedMsg ? upgradeState.message : null;
 
   const categories: { id: UpgradeCategory | 'all'; label: string }[] = [
     { id: 'all', label: 'Kaikki' },
@@ -20,16 +43,6 @@ export const UpgradesView: React.FC = () => {
   const filteredUpgrades = upgrades.filter(
     (u) => selectedCategory === 'all' || u.category === selectedCategory
   );
-
-  const handleBuy = (upgradeId: string) => {
-    const res = purchaseUpgrade(upgradeId);
-    if (res.success) {
-      sound.playUpgrade();
-    } else {
-      sound.playError();
-    }
-    setNotification(res.message);
-  };
 
   return (
     <div className="max-w-4xl mx-auto py-8 space-y-8">
@@ -59,12 +72,12 @@ export const UpgradesView: React.FC = () => {
         </div>
       </div>
 
-      {notification && (
-        <div className="p-4 bg-zinc-900 border border-zinc-700 rounded-xl text-xs text-zinc-200 flex items-center justify-between">
-          <span>{notification}</span>
+      {displayNotification && (
+        <div className="p-4 bg-zinc-900 border border-zinc-700 rounded-xl text-xs text-zinc-200 flex items-center justify-between animate-fade-in">
+          <span>{displayNotification}</span>
           <button
-            onClick={() => setNotification(null)}
-            className="text-zinc-500 hover:text-zinc-300 ml-4"
+            onClick={() => setDismissedMsg(displayNotification)}
+            className="text-zinc-500 hover:text-zinc-300 ml-4 text-sm"
           >
             ×
           </button>
@@ -140,8 +153,8 @@ export const UpgradesView: React.FC = () => {
 
               <div className="pt-2 border-t border-zinc-800/60">
                 <button
-                  onClick={() => handleBuy(item.id)}
-                  disabled={!canAfford}
+                  onClick={() => dispatchUpgrade(item.id)}
+                  disabled={isUpgrading || !canAfford}
                   className={`w-full py-2.5 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors ${
                     isMax
                       ? 'bg-zinc-800/40 text-zinc-600 cursor-default'

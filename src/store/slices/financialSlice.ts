@@ -162,18 +162,8 @@ export const createFinancialSlice: StateCreator<
 
     const finalEarned = Math.round(clickPower * comboMultiplier * staminaPenalty * 100) / 100;
 
-    // Lasketaan staminakulutus (huomioidaan työkalujen ja sertifikaattien helpotukset)
-    let staminaReductionRate = 0;
-    state.upgrades.forEach((u) => {
-      if (u.level > 0 && u.staminaDrainReduction > 0) {
-        staminaReductionRate += u.staminaDrainReduction;
-      }
-    });
-    // Rajoitetaan vähennys maksimissaan 75 prosenttiin
-    staminaReductionRate = Math.min(staminaReductionRate, 0.75);
-
-    const baseStaminaCost = 1.2;
-    const actualStaminaCost = baseStaminaCost * (1.0 - staminaReductionRate);
+    // Lasketaan tehollinen staminakulutus (huomioi työkalut, sertifikaatit, hahmotason ja tiimin)
+    const actualStaminaCost = state.getEffectiveStaminaCost(1.2);
     const newStamina = Math.max(0, Math.round((player.stamina - actualStaminaCost) * 10) / 10);
 
     // Kokemuspisteet (XP) ja tasonnousulogiikka
